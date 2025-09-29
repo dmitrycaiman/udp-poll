@@ -15,7 +15,6 @@ type Request struct {
 }
 
 type Response struct {
-	Hui        string
 	Number     int64
 	CreatedAt  int64
 	ReceivedAt int64

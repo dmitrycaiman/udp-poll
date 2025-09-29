@@ -13,8 +13,11 @@ import (
 	"udp-poll/pkg/client"
 )
 
+// responseTimeout есть время ожидания ответа.
 const responseTimeout = 100 * time.Millisecond
 
+// Poll производит в нескольких потоках отправку фиксированного количества UDP-запросов,
+// получение ответа на них и вывод статистики успешности обработки.
 type Poll struct {
 	c                        *client.Client
 	processingRequests       []chan *entity.Response
@@ -31,6 +34,7 @@ func New(c *client.Client, taskCount, workerCount int) *Poll {
 	}
 }
 
+// Run есть блокирующий запуск опроса. Выход происходит либо по завершению внешнего контекста, либо по окончанию обработки заданий.
 func (slf *Poll) Run(ctx context.Context) error {
 	slf.counter.Add(1)
 
@@ -41,29 +45,7 @@ func (slf *Poll) Run(ctx context.Context) error {
 
 	wg.Add(slf.workerCount + 1)
 	for range slf.workerCount {
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case num, ok := <-sendCh:
-					if !ok {
-						return
-					}
-
-					message := fmt.Sprintf("successfully received message №%v", num)
-					if err := slf.send(ctx, num); err != nil {
-						slf.failed.Add(1)
-						message = fmt.Sprintf("failed to send message №%v: %v", num, err.Error())
-					} else {
-						slf.success.Add(1)
-					}
-					slf.print(ctx, num, message)
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
+		go slf.waitForSend(ctx, wg, sendCh)
 	}
 	go slf.waitForRead(ctx)
 	go slf.waitForFinish(ctx, wg)
@@ -79,6 +61,32 @@ func (slf *Poll) Run(ctx context.Context) error {
 	return fmt.Errorf("poll is stopped")
 }
 
+// waitForSend обрабатывает задания на отправку запроса и получение ответа.
+func (slf *Poll) waitForSend(ctx context.Context, wg *sync.WaitGroup, sendCh <-chan int64) {
+	defer wg.Done()
+
+	for {
+		select {
+		case num, ok := <-sendCh:
+			if !ok {
+				return
+			}
+
+			message := fmt.Sprintf("successfully received message №%v", num)
+			if err := slf.send(ctx, num); err != nil {
+				slf.failed.Add(1)
+				message = fmt.Sprintf("failed to send message №%v: %v", num, err.Error())
+			} else {
+				slf.success.Add(1)
+			}
+			slf.print(ctx, num, message)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// waitForRead производит чтение данных UDP-клиента.
 func (slf *Poll) waitForRead(ctx context.Context) {
 	for {
 		select {
@@ -93,6 +101,7 @@ func (slf *Poll) waitForRead(ctx context.Context) {
 	}
 }
 
+// waitForFinish ожидает завершения обработки всех заданий и выводит итоговую статистику.
 func (slf *Poll) waitForFinish(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -113,6 +122,7 @@ func (slf *Poll) waitForFinish(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// send производит непосредственное выполения задания по формированию, отправке запроса и обработке ответа.
 func (slf *Poll) send(ctx context.Context, num int64) error {
 	req, err := json.Marshal(
 		&entity.Request{
@@ -148,6 +158,7 @@ func (slf *Poll) send(ctx context.Context, num int64) error {
 	}
 }
 
+// receive обрабатывает полученные от UDP-клиента данные и отправляет их ожидающим воркерам.
 func (slf *Poll) receive(data []byte) error {
 	data, err := entity.Unpack(data)
 	if err != nil {
@@ -171,6 +182,7 @@ func (slf *Poll) receive(data []byte) error {
 	}
 }
 
+// print производит логирование обработки запросов в соответствии с их порядковыми номерами.
 func (slf *Poll) print(ctx context.Context, num int64, message string) {
 	for {
 		select {

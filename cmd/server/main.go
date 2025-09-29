@@ -61,6 +61,8 @@ func safeExec(ctx context.Context, wg *sync.WaitGroup, f interface{ Run(context.
 	return errSignal
 }
 
+// handler валидирует получаемые пакеты и формирует ответ при необходимости.
+// В лог будут выведены параметры успешно обработанного запроса.
 func handler(data []byte) ([]byte, error) {
 	receivedAt := time.Now().UTC()
 	b, err := entity.Unpack(data)
